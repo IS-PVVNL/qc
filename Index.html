@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Smart Meter QC Scanner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body { overscroll-behavior-y: none; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen pb-10">
+
+  <!-- 1. AUTHENTICATION LOCK SCREEN -->
+  <div id="loginScreen" class="fixed inset-0 bg-slate-900/95 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center space-y-4">
+      <div class="h-14 w-14 bg-blue-100 text-blue-900 rounded-full flex items-center justify-center mx-auto text-2xl font-bold shadow-inner">
+        🔒
+      </div>
+      <div>
+        <h2 class="text-lg font-bold text-slate-900">Protected Application</h2>
+        <p class="text-xs text-slate-500 mt-1">Enter Master Password to access QC Scanner</p>
+      </div>
+
+      <div class="space-y-2">
+        <input type="password" id="passInput" placeholder="Enter Password" class="w-full border border-slate-300 rounded-xl px-4 py-3 text-center text-sm tracking-wider focus:outline-none focus:ring-2 focus:ring-blue-600 bg-slate-50">
+        <p id="passError" class="text-xs text-red-600 font-semibold hidden">Incorrect password. Please try again.</p>
+      </div>
+
+      <button id="loginBtn" class="w-full py-3 bg-blue-900 hover:bg-blue-800 text-white font-semibold rounded-xl text-sm transition active:scale-95 shadow">
+        Unlock Scanner
+      </button>
+    </div>
+  </div>
+
+  <!-- 2. MAIN APPLICATION -->
+  <div id="appContainer" class="hidden">
+    <header class="bg-blue-900 text-white px-4 py-3 shadow sticky top-0 z-40 flex items-center justify-between">
+      <h1 class="text-base font-bold tracking-wide">Smart Meter QC Scanner</h1>
+      <div class="flex items-center gap-2">
+        <label class="bg-blue-700 hover:bg-blue-600 text-xs px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1 font-medium transition active:scale-95 shadow">
+          📁 <span>Select CSV</span>
+          <input type="file" id="excelInput" accept="*/*, text/*, application/*, .csv" class="hidden">
+        </label>
+        <button id="logoutBtn" title="Lock App" class="bg-slate-800 hover:bg-slate-700 text-xs px-2.5 py-1.5 rounded-lg text-slate-300">
+          🔒
+        </button>
+      </div>
+    </header>
+
+    <main class="max-w-md mx-auto p-4 space-y-4">
+      <!-- Database Status & Progress -->
+      <div id="statusContainer" class="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-xl space-y-2">
+        <div id="statusText" class="font-medium flex items-center justify-between">
+          <span>⚠️ Checking offline database...</span>
+        </div>
+        <div id="progressBox" class="hidden space-y-1">
+          <div class="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+            <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-100" style="width: 0%"></div>
+          </div>
+          <div class="flex justify-between text-[11px] text-slate-600 font-semibold">
+            <span id="progressPercent">0%</span>
+            <span id="progressCount">Processing records...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scanner Controls -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 space-y-3">
+        <div id="reader" class="w-full rounded-xl overflow-hidden hidden bg-black"></div>
+        
+        <button id="scanBtn" class="w-full py-3.5 bg-blue-800 hover:bg-blue-900 text-white font-semibold rounded-xl flex items-center justify-center gap-2 shadow transition active:scale-95">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+          </svg>
+          <span>Open Camera Scanner</span>
+        </button>
+
+        <div class="flex gap-2 pt-1">
+          <input type="text" id="manualInput" placeholder="Enter Meter Number or Barcode" class="flex-1 border border-slate-300 rounded-xl px-3 py-2.5 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 bg-slate-50 uppercase font-mono">
+          <button id="searchBtn" class="bg-slate-800 text-white px-4 py-2.5 rounded-xl font-medium text-sm active:scale-95 transition">Search</button>
+        </div>
+      </div>
+
+      <!-- Result Card -->
+      <div id="resultCard" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+        
+        <!-- 1. CONSUMER & METER DETAILS (UPAR) -->
+        <div class="space-y-3 text-sm">
+          <div>
+            <span class="text-xs text-slate-500 block">Consumer Name</span>
+            <span id="resName" class="font-bold text-slate-900 text-base leading-snug"></span>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <span class="text-xs text-slate-500 block">Consumer ID</span>
+              <span id="resConsumerId" class="font-semibold text-slate-800 font-mono"></span>
+            </div>
+            <div>
+              <span class="text-xs text-slate-500 block">Old Meter No</span>
+              <span id="resOldMeter" class="font-semibold text-slate-800 font-mono"></span>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <span class="text-xs text-slate-500 block">New Meter No</span>
+              <span id="resNewMeter" class="font-semibold text-slate-800 font-mono"></span>
+            </div>
+            <div>
+              <span class="text-xs text-slate-500 block">Barcode Sticker</span>
+              <span id="resBarcode" class="font-semibold text-slate-800 font-mono"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. QC STATUS & REJECTION DETAILS (NICHE) -->
+        <div class="space-y-2 pt-3 border-t border-slate-100">
+          <div class="flex items-center justify-between">
+            <span class="text-xs uppercase font-bold text-slate-400">QC Status</span>
+            <span id="resStatus" class="px-3 py-1 rounded-md text-xs font-bold uppercase tracking-wider"></span>
+          </div>
+
+          <!-- REJECTION METADATA (DATE, BY & REMARK) -->
+          <div id="rejectionMetaBox" class="hidden bg-red-50 border border-red-100 rounded-xl p-2.5 space-y-1 text-xs">
+            <div class="flex justify-between items-center text-slate-700">
+              <span class="font-semibold text-slate-500">Rejection Date:</span>
+              <span id="resRejectionDate" class="font-bold text-red-700 font-mono">-</span>
+            </div>
+            <div class="flex justify-between items-center text-slate-700">
+              <span class="font-semibold text-slate-500">Rejected By:</span>
+              <span id="resRejectedBy" class="font-bold text-red-700">-</span>
+            </div>
+            <div id="resRemarkRow" class="hidden pt-1 border-t border-red-100 text-slate-800 leading-snug">
+              <span class="font-semibold text-slate-500 block">Remark:</span>
+              <span id="resRemarkText" class="font-medium text-red-900 block mt-0.5"></span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Not Found Card -->
+      <div id="notFoundCard" class="hidden bg-red-50 border border-red-200 rounded-xl p-4 text-center text-sm text-red-700 font-semibold">
+        No record found! Please check the Barcode/Meter number.
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const REQUIRED_KEY = "Pvvnl@123";
+
+    function checkAuth() {
+      if (sessionStorage.getItem("isAppUnlocked") === "true") {
+        document.getElementById('loginScreen').classList.add('hidden');
+        document.getElementById('appContainer').classList.remove('hidden');
+        initDB();
+      } else {
+        document.getElementById('loginScreen').classList.remove('hidden');
+        document.getElementById('appContainer').classList.add('hidden');
+      }
+    }
+
+    document.getElementById('loginBtn').addEventListener('click', verifyPassword);
+    document.getElementById('passInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') verifyPassword();
+    });
+
+    function verifyPassword() {
+      const entered = document.getElementById('passInput').value;
+      const err = document.getElementById('passError');
+      if (entered === REQUIRED_KEY) {
+        err.classList.add('hidden');
+        sessionStorage.setItem("isAppUnlocked", "true");
+        document.getElementById('loginScreen').classList.add('hidden');
+        document.getElementById('appContainer').classList.remove('hidden');
+        initDB();
+      } else {
+        err.classList.remove('hidden');
+      }
+    }
+
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      sessionStorage.removeItem("isAppUnlocked");
+      location.reload();
+    });
+
+    let db = null;
+    let html5QrCode = null;
+    let isScanning = false;
+
+    function initDB() {
+      const statusBox = document.getElementById('statusContainer');
+      const statusText = document.getElementById('statusText');
+
+      if (!window.indexedDB) {
+        statusBox.className = "bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-xl";
+        statusText.innerHTML = "<span>⚠️ IndexedDB not supported.</span>";
+        return;
+      }
+
+      const req = indexedDB.open("MeterQCStore_StatusPlacementV2", 1);
+      req.onupgradeneeded = function(e) {
+        const d = e.target.result;
+        if (!d.objectStoreNames.contains("meters")) {
+          const store = d.createObjectStore("meters", { autoIncrement: true });
+          store.createIndex("barcode", "barcode", { unique: false });
+          store.createIndex("newMeter", "newMeter", { unique: false });
+        }
+      };
+      req.onsuccess = function(e) {
+        db = e.target.result;
+        checkStoredCount();
+      };
+    }
+
+    function checkStoredCount() {
+      if (!db) return;
+      try {
+        const tx = db.transaction("meters", "readonly");
+        const store = tx.objectStore("meters");
+        const countReq = store.count();
+        countReq.onsuccess = function() {
+          const count = countReq.result;
+          const statusBox = document.getElementById('statusContainer');
+          const statusText = document.getElementById('statusText');
+          if (count > 0) {
+            statusBox.className = "bg-green-50 border border-green-200 text-green-800 text-xs px-3 py-2.5 rounded-xl space-y-2";
+            statusText.innerHTML = `<span>✅ <b>${count.toLocaleString()}</b> Records Offline Ready</span>`;
+          } else {
+            statusBox.className = "bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-xl space-y-2";
+            statusText.innerHTML = `<span>⚠️ No Data. Click <b>Select CSV</b> to load report.</span>`;
+          }
+        };
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function formatReadableDate(val) {
+      if (!val || val === '-' || val.toLowerCase() === 'null') return '';
+      const num = Number(val);
+      if (!isNaN(num) && num > 30000 && num < 60000) {
+        const d = new Date(Math.round((num - 25569) * 86400 * 1000));
+        return d.toLocaleDateString('en-GB'); // DD/MM/YYYY
+      }
+      return val.split('T')[0].split(' ')[0];
+    }
+
+    // MULTILINE QUOTE-AWARE CSV STREAM PROCESSOR
+    document.getElementById('excelInput').addEventListener('change', async function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const statusBox = document.getElementById('statusContainer');
+      const statusText = document.getElementById('statusText');
+      const progressBox = document.getElementById('progressBox');
+      const progressBar = document.getElementById('progressBar');
+      const progressPercent = document.getElementById('progressPercent');
+      const progressCount = document.getElementById('progressCount');
+
+      statusBox.className = "bg-blue-50 border border-blue-200 text-blue-900 text-xs px-3 py-2.5 rounded-xl space-y-2";
+      statusText.innerHTML = `<span>⏳ Preparing file stream (${(file.size / (1024 * 1024)).toFixed(1)} MB)...</span>`;
+      progressBox.classList.remove('hidden');
+      progressBar.style.width = '5%';
+      progressPercent.innerText = '5%';
+      progressCount.innerText = 'Starting stream...';
+
+      if (db) {
+        const clearTx = db.transaction("meters", "readwrite");
+        clearTx.objectStore("meters").clear();
+        await new Promise(res => { clearTx.oncomplete = res; });
+      }
+
+      try {
+        const stream = file.stream();
+        const reader = stream.getReader();
+        const decoder = new TextDecoder("utf-8");
+
+        let rowCount = 0;
+        let isFirstRow = true;
+        let batch = [];
+        const CHUNK_BATCH = 2000;
+
+        let curRow = [];
+        let curField = '';
+        let inQuotes = false;
+
+        async function flushBatch() {
+          if (batch.length === 0 || !db) return;
+          const tx = db.transaction("meters", "readwrite");
+          const store = tx.objectStore("meters");
+          for (let i = 0; i < batch.length; i++) {
+            store.add(batch[i]);
+          }
+          await new Promise(res => { tx.oncomplete = res; });
+          batch = [];
+        }
+
+        const clean = (val) => (val || '').replace(/^["']|["']$/g, '').replace(/\r/g, '').trim();
+
+        async function handleRow(r) {
+          if (isFirstRow) {
+            isFirstRow = false;
+            return;
+          }
+          if (r.length < 50) return;
+
+          batch.push({
+            consumerId: clean(r[19]),
+            consumerName: clean(r[20]),
+            barcode: clean(r[62]).toUpperCase(),
+            oldMeter: clean(r[64]),
+            newMeter: clean(r[75]).toUpperCase(),
+            qcStatus: clean(r[134]),
+            contractorReject: clean(r[143]),
+            contractorDate: formatReadableDate(clean(r[144])),
+            contractorBy: clean(r[145]),
+            intellismartReject: clean(r[146]),
+            intellismartDate: formatReadableDate(clean(r[147])),
+            intellismartBy: clean(r[148]),
+            discomReject: clean(r[149]),
+            discomDate: formatReadableDate(clean(r[150])),
+            discomBy: clean(r[151]),
+            noOfRejections: clean(r[152])
+          });
+
+          rowCount++;
+          if (batch.length >= CHUNK_BATCH) {
+            await flushBatch();
+            progressCount.innerText = `${rowCount.toLocaleString()} records...`;
+            progressBar.style.width = '60%';
+            progressPercent.innerText = 'Importing...';
+            await new Promise(res => setTimeout(res, 2));
+          }
+        }
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const text = decoder.decode(value, { stream: true });
+          for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            if (char === '"') {
+              inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+              curRow.push(curField);
+              curField = '';
+            } else if ((char === '\n' || char === '\r') && !inQuotes) {
+              if (char === '\r' && text[i + 1] === '\n') {
+                i++;
+              }
+              curRow.push(curField);
+              curField = '';
+              await handleRow(curRow);
+              curRow = [];
+            } else {
+              curField += char;
+            }
+          }
+        }
+
+        if (curField.length > 0 || curRow.length > 0) {
+          curRow.push(curField);
+          await handleRow(curRow);
+        }
+        await flushBatch();
+
+        progressBox.classList.add('hidden');
+        statusBox.className = "bg-green-50 border border-green-200 text-green-800 text-xs px-3 py-2.5 rounded-xl space-y-2";
+        statusText.innerHTML = `<span>✅ <b>${rowCount.toLocaleString()}</b> Records Offline Ready</span>`;
+
+      } catch (err) {
+        console.error(err);
+        statusBox.className = "bg-red-50 border border-red-200 text-red-800 text-xs px-3 py-2.5 rounded-xl space-y-2";
+        statusText.innerHTML = `<span>❌ Error reading CSV file.</span>`;
+        progressBox.classList.add('hidden');
+      }
+    });
+
+    function searchRecord(val) {
+      const q = val.trim().toUpperCase();
+      if (!q || !db) return;
+
+      try {
+        const tx = db.transaction("meters", "readonly");
+        const store = tx.objectStore("meters");
+        const barcodeIdx = store.index("barcode");
+        const newMeterIdx = store.index("newMeter");
+
+        const req1 = barcodeIdx.get(q);
+        req1.onsuccess = function() {
+          if (req1.result) {
+            displayResult(req1.result);
+          } else {
+            const req2 = newMeterIdx.get(q);
+            req2.onsuccess = function() {
+              displayResult(req2.result);
+            };
+          }
+        };
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function displayResult(found) {
+      const resCard = document.getElementById('resultCard');
+      const notFound = document.getElementById('notFoundCard');
+
+      if (found) {
+        notFound.classList.add('hidden');
+        resCard.classList.remove('hidden');
+
+        // Top: Consumer & Meter Details
+        document.getElementById('resName').innerText = found.consumerName || '-';
+        document.getElementById('resConsumerId').innerText = found.consumerId || '-';
+        document.getElementById('resOldMeter').innerText = found.oldMeter || '-';
+        document.getElementById('resNewMeter').innerText = found.newMeter || '-';
+        document.getElementById('resBarcode').innerText = found.barcode || '-';
+
+        // Bottom: QC Status Badge
+        const st = document.getElementById('resStatus');
+        const rawStatus = (found.qcStatus || '').trim();
+        const sLower = rawStatus.toLowerCase();
+        st.innerText = rawStatus || 'N/A';
+
+        if (sLower === 'approved') {
+          st.className = "px-3 py-1 rounded-md text-xs font-bold text-white bg-green-600";
+        } else if (sLower.includes('pending@discom')) {
+          st.className = "px-3 py-1 rounded-md text-xs font-bold text-white bg-blue-600";
+        } else if (sLower.includes('reject')) {
+          st.className = "px-3 py-1 rounded-md text-xs font-bold text-white bg-red-600";
+        } else {
+          st.className = "px-3 py-1 rounded-md text-xs font-bold text-white bg-amber-600";
+        }
+
+        // Rejection Details Box
+        const metaBox = document.getElementById('rejectionMetaBox');
+        const dateEl = document.getElementById('resRejectionDate');
+        const byEl = document.getElementById('resRejectedBy');
+        const remRow = document.getElementById('resRemarkRow');
+        const remText = document.getElementById('resRemarkText');
+
+        const isVal = (v) => v && v !== '-' && v.toLowerCase() !== 'null' && v.toLowerCase() !== 'undefined';
+
+        let rDate = '';
+        let rBy = '';
+        let rRemark = '';
+
+        if (isVal(found.intellismartDate) || isVal(found.intellismartBy) || isVal(found.intellismartReject)) {
+          rDate = found.intellismartDate;
+          rBy = found.intellismartBy;
+          rRemark = found.intellismartReject;
+        } else if (isVal(found.contractorDate) || isVal(found.contractorBy) || isVal(found.contractorReject)) {
+          rDate = found.contractorDate;
+          rBy = found.contractorBy;
+          rRemark = found.contractorReject;
+        } else if (isVal(found.discomDate) || isVal(found.discomBy) || isVal(found.discomReject)) {
+          rDate = found.discomDate;
+          rBy = found.discomBy;
+          rRemark = found.discomReject;
+        }
+
+        if (isVal(rDate) || isVal(rBy) || isVal(rRemark)) {
+          metaBox.classList.remove('hidden');
+          dateEl.innerText = isVal(rDate) ? rDate : 'N/A';
+          byEl.innerText = isVal(rBy) ? rBy : 'N/A';
+
+          if (isVal(rRemark)) {
+            remRow.classList.remove('hidden');
+            remText.innerText = rRemark;
+          } else {
+            remRow.classList.add('hidden');
+          }
+        } else {
+          metaBox.classList.add('hidden');
+        }
+
+      } else {
+        resCard.classList.add('hidden');
+        notFound.classList.remove('hidden');
+      }
+    }
+
+    document.getElementById('searchBtn').addEventListener('click', () => {
+      searchRecord(document.getElementById('manualInput').value);
+    });
+
+    document.getElementById('manualInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') searchRecord(e.target.value);
+    });
+
+    document.getElementById('scanBtn').addEventListener('click', () => {
+      const readerDiv = document.getElementById('reader');
+      if (!isScanning) {
+        readerDiv.classList.remove('hidden');
+        html5QrCode = new Html5Qrcode("reader");
+        html5QrCode.start(
+          { facingMode: "environment" },
+          { fps: 20, qrbox: { width: 250, height: 180 } },
+          (decodedText) => {
+            document.getElementById('manualInput').value = decodedText;
+            searchRecord(decodedText);
+            stopScanner();
+          },
+          (err) => {}
+        ).then(() => {
+          isScanning = true;
+          document.getElementById('scanBtn').innerText = "Stop Scanner";
+        });
+      } else {
+        stopScanner();
+      }
+    });
+
+    function stopScanner() {
+      if (html5QrCode && isScanning) {
+        html5QrCode.stop().then(() => {
+          document.getElementById('reader').classList.add('hidden');
+          isScanning = false;
+          document.getElementById('scanBtn').innerHTML = `<span>Open Camera Scanner</span>`;
+        });
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', checkAuth);
+  </script>
+</body>
+</html>
